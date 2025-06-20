@@ -73,116 +73,115 @@ x_test = (branch_transform(x_test[0]),trunk_transform(x_test[1]))
 # COMMENTED OUT, NO NEED FOR INITIALIZATION
 branch_outputs, trunk_outputs = [], []
 
+# Setup (same as before)
 n_in = 16
 n_out = 20
 num_qubits = max(n_in, n_out)
+sqrt_norm = np.sqrt(num_qubits)
 
-special_arr = np.full(num_qubits, 1 / np.sqrt(num_qubits))
+special_arr = np.full(num_qubits, 1 / sqrt_norm)
 W_gate = W(n_in, n_out, branch_hidden0_thetas)
 loader_special_gate = data_loader(special_arr)
 loader_inv_gate = loader_special_gate.inverse()
 
-sqrt_norm = np.sqrt(num_qubits)
-circuits = []
-valid_inputs = []
+# Define safe number of parallel workers
+n_jobs = min(os.cpu_count(), int(os.environ.get("SLURM_CPUS_PER_TASK", os.cpu_count())))
 
-
-for x_branch0 in tqdm(x_test[0], desc="Building circuits"):
+# Helper function to build and transpile a single circuit
+def build_circuit(x_branch0):
     x_branch = x_branch0.copy()
     x_branch += (np.abs(x_branch) < 1e-7) * 1e-7
-
-    # Construct and store the circuit
     circ = custom_tomo_fast(n_in, n_out, x_branch, W_gate, loader_special_gate, loader_inv_gate)
     circ.save_statevector('state')
-    circuits.append(transpile(circ, simulator))  # Transpile ahead of time
-    valid_inputs.append(x_branch0)  # Save original input for bias layer use
+    return transpile(circ, simulator)
 
-# Run all at once
+# Run parallel circuit construction
+print("Building circuits (parallel)...")
+circuits = Parallel(n_jobs=n_jobs, backend="loky")(
+    delayed(build_circuit)(x) for x in tqdm(x_test[0], desc="Building circuits")
+)
+
+valid_inputs = list(x_test[0])  # save for later use
+
 print("Running on GPU...")
 job = simulator.run(circuits, shots=1)
 results = job.result()
-states = results.data()
 
 # Post-process statevectors
 print("Post-processing...")
-branch_outputs = []
 
-for idx, state_data in enumerate(states):
-    state = np.real(state_data['state'].data)
+def process_state(idx, results, n_in, n_out, sqrt_norm,
+                  branch_hidden0_bias, branch_output_weight, branch_output_bias):
+    state = np.real(results.data(idx)['state'].data)
+
+    # Precompute output using bit indexing
     output = []
     for i in range(n_out):
-        pos = ['0'] * n_out
-        pos[i] = '1'
-        pos0 = ['0'] + ['0'] * (n_in - n_out) + pos
-        pos1 = ['1'] + ['0'] * (n_in - n_out) + pos
-        result0 = state[int(''.join(pos0)[::-1], 2)]
-        result1 = state[int(''.join(pos1)[::-1], 2)]
+        offset = (1 << (n_in + i))  # bitmask for '1' at the correct output index
+        result0 = state[offset]         # ancilla = 0
+        result1 = state[offset + 1]     # ancilla = 1 (since ancilla is qubit 0)
         output.append(sqrt_norm * (result0 ** 2 - result1 ** 2))
 
-    # Now do classical NN post-processing
     x_branch = silu(np.array(output) + branch_hidden0_bias)
-    x_branch = np.dot(x_branch, branch_output_weight.T) + branch_output_bias
-    branch_outputs.append(x_branch)
+    return np.dot(x_branch, branch_output_weight.T) + branch_output_bias
+
+# Set safe n_jobs
+n_jobs = min(os.cpu_count(), int(os.environ.get("SLURM_CPUS_PER_TASK", os.cpu_count())))
+
+print("Post-processing (parallel)...")
+branch_outputs = Parallel(n_jobs=n_jobs, backend="loky")(
+    delayed(process_state)(
+        idx, results, n_in, n_out, sqrt_norm,
+        branch_hidden0_bias, branch_output_weight, branch_output_bias
+    )
+    for idx in tqdm(range(len(circuits)), desc="Processing outputs")
+)
 
 branch_outputs = np.array(branch_outputs)
 
-"""
-for x_branch0 in tqdm(x_test[0], desc="XD"):
-    x_branch = x_branch0
 
-    # LAYER SIZE HERE
-    x_branch = silu(
-        tomo_output_fast(n_in, n_out, x_branch, simulator,
-                         W_gate, loader_special_gate, loader_inv_gate)
-        + branch_hidden0_bias
+W_gate = W(n_in, n_out, trunk_hidden0_thetas)
+def build_circuit_trunk(x_trunk0):
+    x_trunk = x_trunk0.copy()
+    x_trunk += (np.abs(x_trunk) < 1e-7) * 1e-7
+    circ = custom_tomo_fast(1+1, n_out, x_trunk, W_gate, loader_special_gate, loader_inv_gate)
+    circ.save_statevector('state')
+    return transpile(circ, simulator)
+
+# Run parallel circuit construction
+print("Building circuits (parallel)...")
+circuits = Parallel(n_jobs=n_jobs, backend="loky")(
+    delayed(build_circuit_trunk)(x) for x in tqdm(x_test[1], desc="Building circuits")
+)
+
+def process_state_trunk(idx, results, n_in, n_out, sqrt_norm,
+                  branch_hidden0_bias, branch_output_weight, branch_output_bias):
+    state = np.real(results.data(idx)['state'].data)
+
+    # Precompute output using bit indexing
+    output = []
+    for i in range(n_out):
+        offset = (1 << (n_in + i))  # bitmask for '1' at the correct output index
+        result0 = state[offset]         # ancilla = 0
+        result1 = state[offset + 1]     # ancilla = 1 (since ancilla is qubit 0)
+        output.append(sqrt_norm * (result0 ** 2 - result1 ** 2))
+
+    x_branch = silu(np.array(output) + branch_hidden0_bias)
+    return np.dot(x_branch, branch_output_weight.T) + branch_output_bias
+
+
+print("Post-processing (parallel)...")
+trunk_outputs = Parallel(n_jobs=n_jobs, backend="loky")(
+    delayed(process_state_trunk)(
+        idx, results, 1+1, n_out, sqrt_norm,
+        trunk_hidden0_bias, trunk_output_weight, trunk_output_bias
     )
-    x_branch = np.dot(x_branch, branch_output_weight.T) + branch_output_bias
-
-    branch_outputs.append(x_branch.copy())
-"""
-"""
-for x_branch0 in tqdm(x_test[0]):
-    x_branch = x_branch0
-
-    # LAYER SIZE HERE
-    x_branch = silu(tomo_output(15+1,20, x_branch, branch_hidden0_thetas,simulator)+branch_hidden0_bias)
-    x_branch = np.dot(x_branch,branch_output_weight.T) +branch_output_bias
-
-    branch_outputs.append(x_branch.copy())
-
-
-# PARALLEL BRANCH OUTPUT WITH PROGRESS BAR
-# SET DIM TO 15+1
-branch_outputs = Parallel(n_jobs=-1)(
-    delayed(lambda xb: (np.dot(
-        silu(tomo_output(15+1, 20, xb, branch_hidden0_thetas, simulator) + branch_hidden0_bias),
-        branch_output_weight.T
-    ) + branch_output_bias).copy())(x_branch)
-    for x_branch in tqdm(x_test[0], desc="Computing Branch Outputs")
+    for idx in tqdm(range(len(circuits)), desc="Processing outputs")
 )
-"""
 
-"""
-for x_trunk in tqdm(x_test[1]):
-
-    # LAYER SIZE HERE
-    x_trunk = silu(tomo_output(1+1,20, x_trunk, trunk_hidden0_thetas,simulator)+trunk_hidden0_bias)
-    x_trunk = np.dot(x_trunk,trunk_output_weight.T) +trunk_output_bias
-    x_trunk = silu(x_trunk)
-
-    trunk_outputs.append(x_trunk.copy())
+trunk_outputs = np.array(trunk_outputs)
 
 
-trunk_outputs = Parallel(n_jobs=-1)(
-    delayed(lambda xt: silu(
-        np.dot(
-            silu(tomo_output(1+1, 20, xt, trunk_hidden0_thetas, simulator) + trunk_hidden0_bias),
-            trunk_output_weight.T
-        ) + trunk_output_bias
-    ).copy())(x_trunk)
-    for x_trunk in tqdm(x_test[1], desc="Computing Trunk Outputs")
-)
-"""
 x = (np.einsum('bi,ni->bn',np.array(branch_outputs),np.array(trunk_outputs))+b)
 
 # COMMENTED THIS OUT

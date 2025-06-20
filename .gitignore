@@ -1,4 +1,3 @@
-*.npz
 *.ipynb
 __pycache__/
 *.png
