@@ -154,7 +154,7 @@ def tomo_output(n_in, n_out, data_array, thetas,simulator):
             data_array[i] += 1e-7
     tomo_circuit = custom_tomo(n_in, n_out, data_array, thetas)
     tomo_circuit.save_statevector('state')
-    state = simulator.run(transpile(tomo_circuit, simulator),shots=1,target_gpus=[0]).result()
+    state = simulator.run(transpile(tomo_circuit, simulator),shots=1).result()
     result = np.real(state.data()['state'].data)
     
     output = []

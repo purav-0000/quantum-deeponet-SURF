@@ -39,11 +39,11 @@ def silu(x):
 #load test data, make sure we use the same input transformation as training
 
 # ADD ../../../data/data_ode_simple/ TO PATH
-d1 = np.load(r'../../../data/data_ode_simple/picked_aligned_train.npz',allow_pickle=True)
+d1 = np.load(r'data/data_ode_simple/picked_aligned_train.npz',allow_pickle=True)
 x_train,y_train = (d1['X0'].astype(np.float32),d1['X1'].astype(np.float32)),d1['y'].astype(np.float32)
 
 # ADD ../../../data/data_ode_simple/ TO PATH
-d2 = np.load(r'../../../data/data_ode_simple/picked_aligned_test.npz',allow_pickle=True)
+d2 = np.load(r'data/data_ode_simple/picked_aligned_test.npz',allow_pickle=True)
 x_test,y_test = (d2['X0'].astype(np.float32),d2['X1'].astype(np.float32)),d2['y'].astype(np.float32)
 
 trunk_min = np.min( np.stack((np.min(x_train[1], axis=0),np.min(x_test[1], axis=0)),axis=0),axis=0)
@@ -71,7 +71,7 @@ x_train = (branch_transform(x_train[0]),trunk_transform(x_train[1]))
 x_test = (branch_transform(x_test[0]),trunk_transform(x_test[1]))
 
 # COMMENTED OUT, NO NEED FOR INITIALIZATION
-branch_outputs, trunk_outputs = [], []
+# branch_outputs, trunk_outputs = [], []
 
 # Setup (same as before)
 n_in = 16
@@ -85,7 +85,7 @@ loader_special_gate = data_loader(special_arr)
 loader_inv_gate = loader_special_gate.inverse()
 
 # Define safe number of parallel workers
-n_jobs = min(os.cpu_count(), int(os.environ.get("SLURM_CPUS_PER_TASK", os.cpu_count())))
+n_jobs = 1
 
 # Helper function to build and transpile a single circuit
 def build_circuit(x_branch0):
@@ -114,19 +114,22 @@ def process_state(idx, results, n_in, n_out, sqrt_norm,
                   branch_hidden0_bias, branch_output_weight, branch_output_bias):
     state = np.real(results.data(idx)['state'].data)
 
-    # Precompute output using bit indexing
     output = []
     for i in range(n_out):
-        offset = (1 << (n_in + i))  # bitmask for '1' at the correct output index
-        result0 = state[offset]         # ancilla = 0
-        result1 = state[offset + 1]     # ancilla = 1 (since ancilla is qubit 0)
-        output.append(sqrt_norm * (result0 ** 2 - result1 ** 2))
+        pos = ['0'] * n_out
+        pos[i] = '1'
+        pos0 = ['0'] + ['0'] * (n_in - n_out) + pos
+        pos1 = ['1'] + ['0'] * (n_in - n_out) + pos
+        pos0 = ''.join(pos0)[::-1]
+        pos1 = ''.join(pos1)[::-1]
+        result0 = state[int(pos0, 2)]
+        result1 = state[int(pos1, 2)]
+        output.append(np.sqrt(np.maximum(n_in, n_out)) * (result0 ** 2 - result1 ** 2))
+    output = np.array(output)
 
     x_branch = silu(np.array(output) + branch_hidden0_bias)
     return np.dot(x_branch, branch_output_weight.T) + branch_output_bias
 
-# Set safe n_jobs
-n_jobs = min(os.cpu_count(), int(os.environ.get("SLURM_CPUS_PER_TASK", os.cpu_count())))
 
 print("Post-processing (parallel)...")
 branch_outputs = Parallel(n_jobs=n_jobs, backend="loky")(
@@ -140,11 +143,19 @@ branch_outputs = Parallel(n_jobs=n_jobs, backend="loky")(
 branch_outputs = np.array(branch_outputs)
 
 
-W_gate = W(n_in, n_out, trunk_hidden0_thetas)
+num_qubits = max(1+1, n_out)
+sqrt_norm = np.sqrt(num_qubits)
+
+special_arr_2 = np.full(num_qubits, 1 / sqrt_norm)
+W_gate_2 = W(1+1, n_out, trunk_hidden0_thetas)
+loader_special_gate_2 = data_loader(special_arr)
+loader_inv_gate_2 = loader_special_gate.inverse()
+
+
 def build_circuit_trunk(x_trunk0):
     x_trunk = x_trunk0.copy()
     x_trunk += (np.abs(x_trunk) < 1e-7) * 1e-7
-    circ = custom_tomo_fast(1+1, n_out, x_trunk, W_gate, loader_special_gate, loader_inv_gate)
+    circ = custom_tomo_fast(1+1, n_out, x_trunk, W_gate_2, loader_special_gate_2, loader_inv_gate_2)
     circ.save_statevector('state')
     return transpile(circ, simulator)
 
@@ -155,19 +166,24 @@ circuits = Parallel(n_jobs=n_jobs, backend="loky")(
 )
 
 def process_state_trunk(idx, results, n_in, n_out, sqrt_norm,
-                  branch_hidden0_bias, branch_output_weight, branch_output_bias):
+                  trunk_hidden0_bias, trunk_output_weight, trunk_output_bias):
     state = np.real(results.data(idx)['state'].data)
 
-    # Precompute output using bit indexing
     output = []
     for i in range(n_out):
-        offset = (1 << (n_in + i))  # bitmask for '1' at the correct output index
-        result0 = state[offset]         # ancilla = 0
-        result1 = state[offset + 1]     # ancilla = 1 (since ancilla is qubit 0)
-        output.append(sqrt_norm * (result0 ** 2 - result1 ** 2))
+        pos = ['0'] * n_out
+        pos[i] = '1'
+        pos0 = ['0'] + ['0'] * (n_in - n_out) + pos
+        pos1 = ['1'] + ['0'] * (n_in - n_out) + pos
+        pos0 = ''.join(pos0)[::-1]
+        pos1 = ''.join(pos1)[::-1]
+        result0 = state[int(pos0, 2)]
+        result1 = state[int(pos1, 2)]
+        output.append(np.sqrt(np.maximum(n_in, n_out)) * (result0 ** 2 - result1 ** 2))
+    output = np.array(output)
 
-    x_branch = silu(np.array(output) + branch_hidden0_bias)
-    return np.dot(x_branch, branch_output_weight.T) + branch_output_bias
+    x_branch = silu(np.array(output) + trunk_hidden0_bias)
+    return np.dot(x_branch, trunk_output_weight.T) + trunk_output_bias
 
 
 print("Post-processing (parallel)...")
@@ -182,7 +198,7 @@ trunk_outputs = Parallel(n_jobs=n_jobs, backend="loky")(
 trunk_outputs = np.array(trunk_outputs)
 
 
-x = (np.einsum('bi,ni->bn',np.array(branch_outputs),np.array(trunk_outputs))+b)
+x = (np.einsum('bi,ni->bn',branch_outputs,trunk_outputs)+b)
 
 # COMMENTED THIS OUT
 # x = x * x_test[1].reshape(1,-1)
