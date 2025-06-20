@@ -93,7 +93,6 @@ def main():
     # NEW m DIM
     m = 15
 
-
     # CHANGING ACTIVATION FUNCTION FROM RELU TO SILU
     net = OrthoONetCartesianProd(
         [m+1,20,20],

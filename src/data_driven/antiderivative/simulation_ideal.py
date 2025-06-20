@@ -16,7 +16,7 @@ from tqdm import tqdm
 # MAKE IMPORTS ABSOLUTE
 # Define input directory relative to current file
 # Load desired seed parameters
-seed_number = 3570396786
+seed_number = 1831700382
 input_dir = os.path.join(os.path.dirname(__file__), f"classical_training_seed{seed_number}")
 
 branch_hidden0_bias = np.loadtxt(os.path.join(input_dir, "branch.hidden_layers.0.bias.txt"))
