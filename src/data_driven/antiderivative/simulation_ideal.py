@@ -3,10 +3,11 @@ import numpy as np
 import os
 
 # SET PACKAGE TO QISKIT_AER INSTEAD OF QISKIT.PROVIDERS.AER
+from qiskit import transpile
 from qiskit_aer import AerSimulator
 
 # REMOVE RELATIVE IMPORT
-from src.quantum_layer_ideal import data_loader, tomo_output, tomo_output_fast, W
+from src.quantum_layer_ideal import custom_tomo_fast, data_loader, tomo_output, tomo_output_fast, W
 
 # PARALLELISM AND PROGRESS BAR
 from joblib import Parallel, delayed
@@ -30,8 +31,8 @@ trunk_output_weight = np.loadtxt(os.path.join(input_dir, "trunk.output_layer.wei
 b = np.loadtxt(os.path.join(input_dir, "b.txt"))
 
 # SET SIMULATOR TO CPU
-simulator = AerSimulator(device='CPU')
-simulator.run()
+simulator = AerSimulator(device='GPU')
+
 def silu(x):
     return x / (1 + np.exp(-x))
 
@@ -72,8 +73,7 @@ x_test = (branch_transform(x_test[0]),trunk_transform(x_test[1]))
 # COMMENTED OUT, NO NEED FOR INITIALIZATION
 branch_outputs, trunk_outputs = [], []
 
-
-n_in = 16  # e.g., 15 + 1
+n_in = 16
 n_out = 20
 num_qubits = max(n_in, n_out)
 
@@ -82,7 +82,51 @@ W_gate = W(n_in, n_out, branch_hidden0_thetas)
 loader_special_gate = data_loader(special_arr)
 loader_inv_gate = loader_special_gate.inverse()
 
+sqrt_norm = np.sqrt(num_qubits)
+circuits = []
+valid_inputs = []
 
+
+for x_branch0 in tqdm(x_test[0], desc="Building circuits"):
+    x_branch = x_branch0.copy()
+    x_branch += (np.abs(x_branch) < 1e-7) * 1e-7
+
+    # Construct and store the circuit
+    circ = custom_tomo_fast(n_in, n_out, x_branch, W_gate, loader_special_gate, loader_inv_gate)
+    circ.save_statevector('state')
+    circuits.append(transpile(circ, simulator))  # Transpile ahead of time
+    valid_inputs.append(x_branch0)  # Save original input for bias layer use
+
+# Run all at once
+print("Running on GPU...")
+job = simulator.run(circuits, shots=1)
+results = job.result()
+states = results.data()
+
+# Post-process statevectors
+print("Post-processing...")
+branch_outputs = []
+
+for idx, state_data in enumerate(states):
+    state = np.real(state_data['state'].data)
+    output = []
+    for i in range(n_out):
+        pos = ['0'] * n_out
+        pos[i] = '1'
+        pos0 = ['0'] + ['0'] * (n_in - n_out) + pos
+        pos1 = ['1'] + ['0'] * (n_in - n_out) + pos
+        result0 = state[int(''.join(pos0)[::-1], 2)]
+        result1 = state[int(''.join(pos1)[::-1], 2)]
+        output.append(sqrt_norm * (result0 ** 2 - result1 ** 2))
+
+    # Now do classical NN post-processing
+    x_branch = silu(np.array(output) + branch_hidden0_bias)
+    x_branch = np.dot(x_branch, branch_output_weight.T) + branch_output_bias
+    branch_outputs.append(x_branch)
+
+branch_outputs = np.array(branch_outputs)
+
+"""
 for x_branch0 in tqdm(x_test[0], desc="XD"):
     x_branch = x_branch0
 
@@ -95,7 +139,7 @@ for x_branch0 in tqdm(x_test[0], desc="XD"):
     x_branch = np.dot(x_branch, branch_output_weight.T) + branch_output_bias
 
     branch_outputs.append(x_branch.copy())
-
+"""
 """
 for x_branch0 in tqdm(x_test[0]):
     x_branch = x_branch0
