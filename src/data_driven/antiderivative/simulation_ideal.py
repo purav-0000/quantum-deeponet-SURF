@@ -16,7 +16,7 @@ from tqdm import tqdm
 # MAKE IMPORTS ABSOLUTE
 # Define input directory relative to current file
 # Load desired seed parameters
-seed_number = 1831700382
+seed_number = 420
 input_dir = os.path.join(os.path.dirname(__file__), f"classical_training_seed{seed_number}")
 
 branch_hidden0_bias = np.loadtxt(os.path.join(input_dir, "branch.hidden_layers.0.bias.txt"))
@@ -74,8 +74,8 @@ x_test = (branch_transform(x_test[0]),trunk_transform(x_test[1]))
 # branch_outputs, trunk_outputs = [], []
 
 # Setup (same as before)
-n_in = 16
-n_out = 20
+n_in = 11
+n_out = 10
 num_qubits = max(n_in, n_out)
 sqrt_norm = np.sqrt(num_qubits)
 
@@ -148,8 +148,8 @@ sqrt_norm = np.sqrt(num_qubits)
 
 special_arr_2 = np.full(num_qubits, 1 / sqrt_norm)
 W_gate_2 = W(1+1, n_out, trunk_hidden0_thetas)
-loader_special_gate_2 = data_loader(special_arr)
-loader_inv_gate_2 = loader_special_gate.inverse()
+loader_special_gate_2 = data_loader(special_arr_2)
+loader_inv_gate_2 = loader_special_gate_2.inverse()
 
 
 def build_circuit_trunk(x_trunk0):
