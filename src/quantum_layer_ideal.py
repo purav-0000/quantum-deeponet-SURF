@@ -113,67 +113,6 @@ def W(n_in, n_out, thetas): #generate thetas else where
     # plt.show()
     return W_circuit.to_gate()
 
-def custom_tomo(n_in, n_out, data_array, thetas):
-     #len(data_array) should be equal to n_in
-
-    num_qubits = max(n_in,n_out)
-    special_arr = np.array([1/np.sqrt(num_qubits)]*num_qubits)
-    
-    anc_qr = QuantumRegister(1)
-    anc_cr = ClassicalRegister(1)
-    tomo_qr = QuantumRegister(num_qubits) #construct a larger circuit
-    tomo_cr = ClassicalRegister(n_out)
-    tomo_circuit = QuantumCircuit(anc_qr, tomo_qr, anc_cr, tomo_cr)
-  
-
-    input_qubits = [i for i in range(num_qubits-n_in+1,num_qubits+1)] # put dataloader at the bottom of the pyramid
-    tomo_qubits = [i for i in range(1,num_qubits+1)]
-    
-    tomo_circuit.h(anc_qr)
-    tomo_circuit.cx(anc_qr, tomo_qr[num_qubits-n_in])
-    tomo_circuit.compose(data_loader(data_array), qubits=input_qubits, inplace=True)
-    tomo_circuit.compose(W(n_in, n_out, thetas), qubits=tomo_qr, inplace=True)
-    tomo_circuit.compose(data_loader(special_arr).inverse(), qubits=tomo_qubits, inplace=True)
-    tomo_circuit.barrier()
-    
-    tomo_circuit.x(anc_qr)
-    tomo_circuit.cx(anc_qr, tomo_qr[0])
-    tomo_circuit.compose(data_loader(special_arr), qubits=tomo_qubits, inplace=True)
-    tomo_circuit.barrier()
-    
-    tomo_circuit.h(anc_qr)
-
-    # fig = tomo_circuit.draw(output='mpl')
-    # display(fig)
-
-    return tomo_circuit
-
-def tomo_output(n_in, n_out, data_array, thetas,simulator):
-    for i in range(len(data_array)):
-        if np.abs(data_array[i]) < 1e-7:
-            data_array[i] += 1e-7
-    tomo_circuit = custom_tomo(n_in, n_out, data_array, thetas)
-    tomo_circuit.save_statevector('state')
-    state = simulator.run(transpile(tomo_circuit, simulator),shots=1).result()
-    result = np.real(state.data()['state'].data)
-    
-    output = []
-    for i in range(n_out):
-        pos = ['0']*n_out
-        pos[i] = '1'
-        pos0 = ['0']+['0']*(n_in-n_out)+pos
-        pos1 = ['1']+['0']*(n_in-n_out)+pos
-        pos0 = ''.join(pos0)[::-1]
-        pos1 = ''.join(pos1)[::-1]
-        result0 = result[int(pos0,2)]
-        result1 = result[int(pos1,2)]
-        output.append(np.sqrt(np.maximum(n_in,n_out))*(result0**2-result1**2))
-    output = np.array(output)
-        
-    #pick out needed states
-        
-    return output
-
 
 def custom_tomo_fast(n_in, n_out, data_array, W_gate, loader_special_gate, loader_inv_gate):
     num_qubits = max(n_in, n_out)
