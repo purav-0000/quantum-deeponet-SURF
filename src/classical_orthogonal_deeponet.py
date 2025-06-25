@@ -1,8 +1,6 @@
 import torch
 import deepxde as dde
 import deepxde.nn.activations as activations
-
-# ADDING SRC. TO SRC.CLASSICAL_ORTHOGONAL_NN
 from src.classical_orthogonal_NN import OrthoNN
 
 class OrthoONetCartesianProd(dde.nn.pytorch.NN):
@@ -41,20 +39,17 @@ class OrthoONetCartesianProd(dde.nn.pytorch.NN):
             x_func = self._branch_transform(x_func)
         # Branch net to encode the input function
         x_func = self.branch(x_func)
-        # print("X_func", x_func.shape)
 
         if self._trunk_transform is not None:
             x_loc = self._trunk_transform(x_loc)
         x_loc = self.trunk(x_loc)
         x_loc = self.activation_trunk(x_loc)
-        # print("X_loc", x_loc.shape)
         # Dot product
         if x_func.shape[-1] != x_loc.shape[-1]:
             raise AssertionError(
                 "Output sizes of branch net and trunk net do not match."
             )
         x = torch.einsum("bi,ni->bn", x_func, x_loc)
-
         # Add bias
         x += self.b
         return x

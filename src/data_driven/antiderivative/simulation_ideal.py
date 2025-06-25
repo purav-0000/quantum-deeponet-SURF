@@ -9,7 +9,7 @@ from qiskit_aer import AerSimulator
 from src.quantum_layer_ideal import custom_tomo_fast, data_loader, W
 
 # --- Configuration ---
-SEED = 420
+SEED = 777
 N_JOBS = 1
 SIMULATOR = AerSimulator(device='CPU')
 DATA_DIR = "data/data_ode_simple"
@@ -30,6 +30,7 @@ def load_weights(directory):
         "trunk_hidden0_thetas": np.loadtxt(os.path.join(directory, "trunk.hidden_layers.0.thetas.txt")),
         "trunk_output_bias": np.loadtxt(os.path.join(directory, "trunk.output_layer.bias.txt")),
         "trunk_output_weight": np.loadtxt(os.path.join(directory, "trunk.output_layer.weight.txt")),
+
         "b": np.loadtxt(os.path.join(directory, "b.txt"))
     }
 
@@ -66,8 +67,7 @@ def build_circuit(x_input0, n_in, n_out, W_gate, loader_special_gate, loader_inv
     return transpile(circ, SIMULATOR)
 
 
-def process_state(idx, results, n_in, n_out, sqrt_norm,
-                  hidden0_bias, output_weight, output_bias, trunk=False):
+def process_state(idx, results, n_in, n_out, hidden0_bias, output_weight, output_bias, trunk=False, final_layer=False):
     state = np.real(results.data(idx)['state'].data)
     output = []
 
@@ -82,12 +82,16 @@ def process_state(idx, results, n_in, n_out, sqrt_norm,
         result1 = state[int(pos1, 2)]
         output.append(np.sqrt(max(n_in, n_out)) * (result0 ** 2 - result1 ** 2))
 
-    x_branch = silu(np.array(output) + hidden0_bias)
-    ret_val = np.dot(x_branch, output_weight.T) + output_bias
-    return silu(ret_val) if trunk else ret_val
+    ret_val = silu(np.array(output) + hidden0_bias)
+
+    if final_layer:
+        ret_val = np.dot(ret_val, output_weight.T) + output_bias
+        return silu(ret_val) if trunk else ret_val
+    else:
+        return ret_val
 
 
-def run_quantum_layer(inputs, n_in, n_out, hidden0_bias, output_weight, output_bias, thetas, simulator, batch_size=None, trunk=False, n_jobs=1):
+def run_quantum_layer(inputs, n_in, n_out, hidden0_bias, output_weight, output_bias, thetas, simulator, batch_size=None, trunk=False, final_layer=False, n_jobs=-1):
     sqrt_norm = np.sqrt(max(n_in, n_out))
     W_gate = W(n_in, n_out, thetas)
     loader = data_loader(np.full(max(n_in, n_out), 1 / sqrt_norm))
@@ -102,8 +106,8 @@ def run_quantum_layer(inputs, n_in, n_out, hidden0_bias, output_weight, output_b
         job = simulator.run(circuits, shots=1)
         results = job.result()
         return np.array(Parallel(n_jobs=n_jobs)(
-            delayed(process_state)(i, results, n_in, n_out, sqrt_norm,
-                                   hidden0_bias, output_weight, output_bias, trunk)
+            delayed(process_state)(i, results, n_in, n_out,
+                                   hidden0_bias, output_weight, output_bias, trunk, final_layer)
             for i in tqdm(range(len(circuits)), desc="Post-processing")
         ))
     else:
@@ -118,11 +122,12 @@ def run_quantum_layer(inputs, n_in, n_out, hidden0_bias, output_weight, output_b
             job = simulator.run(circuits, shots=1)
             results = job.result()
             outputs.extend(Parallel(n_jobs=n_jobs)(
-                delayed(process_state)(j, results, n_in, n_out, sqrt_norm,
-                                       hidden0_bias, output_weight, output_bias, trunk)
+                delayed(process_state)(j, results, n_in, n_out,
+                                       hidden0_bias, output_weight, output_bias, trunk, final_layer)
                 for j in range(len(circuits))
             ))
         return np.array(outputs)
+
 
 def evaluate_model(branch_out, trunk_out, b, y_true, seed):
     x = (np.einsum('bi,ni->bn', branch_out, np.array(trunk_out)) + b)
@@ -150,7 +155,8 @@ def main():
         weights["branch_output_bias"],
         weights["branch_hidden0_thetas"],
         simulator=SIMULATOR,
-        batch_size=10
+        final_layer=True,
+        batch_size=None
     )
 
     trunk_outputs = run_quantum_layer(
@@ -160,7 +166,8 @@ def main():
         weights["trunk_output_bias"],
         weights["trunk_hidden0_thetas"],
         simulator=SIMULATOR,
-        batch_size=10,
+        batch_size=None,
+        final_layer=True,
         trunk=True
     )
 

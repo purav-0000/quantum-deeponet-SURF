@@ -160,4 +160,4 @@ if __name__ == '__main__':
     # gen_data_GRF(1000,Nv = 10,Nu = 30,l=1,train = 200, test = 100)
 
     # MORE DIVERSE TRAIN AND TEST SET
-    gen_data_GRF(2000, Nv=15, Nu=40, l=1, train=100, test=50)
+    gen_data_GRF(1000, Nv=10, Nu=30, l=0.5, train=1500, test=500)

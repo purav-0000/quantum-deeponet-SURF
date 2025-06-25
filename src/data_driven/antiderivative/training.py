@@ -7,6 +7,7 @@ import os
 # SET SEEDS OF THESE LIBRARIES
 import random
 import torch
+import torch.profiler
 
 # REMOVING RELATIVE IMPORT
 from src.classical_orthogonal_deeponet import OrthoONetCartesianProd
@@ -56,6 +57,7 @@ def main():
     branch_min = np.min(np.stack((np.min(x_train_full[0], axis=0),np.min(x_test[0], axis=0)),axis=0),axis=0)
     branch_max = np.max( np.stack((np.max(x_train_full[0], axis=0),np.max(x_test[0], axis=0)),axis=0),axis=0)
 
+    """
     # CREATE BOOTSTRAP SAMPLES
     n_train = y_train_full.shape[0]
     bootstrap_indices = np.random.choice(n_train, n_train, replace=True)
@@ -64,45 +66,47 @@ def main():
     y_train_bootstrap = y_train_full[bootstrap_indices]
 
     print((x_train_full[0] < 0).sum())
-
+    """
     # COMMENT OUT WHEN BOOTSTRAPPING
-    """
-    # MOVING TRUNK_MIN AND TRUNK_MAX INTO TRUNK_TRANSFORM AS ARGUMENTS
-    x_train = (branch_transform(x_train[0], branch_min, branch_max),
-               trunk_transform(x_train[1], trunk_min, trunk_max))
-    """
 
+    # MOVING TRUNK_MIN AND TRUNK_MAX INTO TRUNK_TRANSFORM AS ARGUMENTS
+    x_train = (branch_transform(x_train_full[0], branch_min, branch_max),
+               trunk_transform(x_train_full[1], trunk_min, trunk_max))
+
+    """
     # TRANSFORM BOOTSTRAP SAMPLES
     x_train_bootstrap = (branch_transform(x_train_bootstrap[0], branch_min, branch_max),
                          trunk_transform(x_train_bootstrap[1], trunk_min, trunk_max))
-
+    """
     # MOVING BRANCH_MIN AND BRANCH_MAX INTO BRANCH_TRANSFORM AS ARGUMENTS
     # AND MOVING TRUNK_MIN AND TRUNK_MAX INTO TRUNK_TRANSFORM AS ARGUMENTS
     x_test = (branch_transform(x_test[0], branch_min, branch_max),
               trunk_transform(x_test[1], trunk_min, trunk_max))
 
+    print(x_train[0].shape)
+
     # PASS BOOTSTRAP SAMPLES
     # import pdb;pdb.set_trace()
     data = dde.data.TripleCartesianProd(
-        X_train = x_train_bootstrap, y_train = y_train_bootstrap, X_test = x_test, y_test = y_test
+        X_train = x_train, y_train = y_train_full, X_test = x_test, y_test = y_test
     )
     #choose network
-    # m = 10
+    m = 10
     dim_x = 1
-
-    # NEW m DIM
-    m = 15
 
     # CHANGING ACTIVATION FUNCTION FROM RELU TO SILU
     net = OrthoONetCartesianProd(
-        [m+1,20,20],
-        [dim_x+1,20,20],
+        [m+1,10,10],
+        [dim_x+1,10,10],
         'silu'
     )
 
+
     model = dde.Model(data,net)
     model.compile('adam',lr=0.001,metrics=['mean l2 relative error'])
-    losshistory, train_state = model.train(iterations=3000,disregard_previous_best = True)
+    # torch.autograd.set_detect_anomaly(True)
+
+    losshistory, train_state = model.train(iterations=30000,disregard_previous_best = True)
 
     # SET DIR NAME RELATED TO SEED
     save_dir = f'classical_training_seed{seed}'
