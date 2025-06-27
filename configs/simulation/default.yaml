@@ -1,0 +1,9 @@
+data_dir: "data_ode_simple"
+model: zero
+ensemble: null
+greedy: False
+n_jobs: 8
+simulator: "CPU"
+mode: "ideal"
+shots: 0
+batch_size: null

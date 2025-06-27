@@ -1,163 +1,206 @@
+import argparse
 import os
-os.environ['DDE_BACKEND'] = 'pytorch'
-print(os.environ.get('DDE_BACKEND'))
+import logging
+import secrets
+from dataclasses import dataclass, field
+from typing import List, Union, Optional
 
-# MY EDIT
-os.makedirs('data_ode_simple', exist_ok=True)
-
-import deepxde as dde
-from deepxde.data.function_spaces import GRF
 import numpy as np
-import matplotlib.pyplot as plt
-
-# LOADING BAR
+import yaml
+from deepxde.data.function_spaces import GRF
+from joblib import Parallel, delayed
+from scipy.integrate import cumulative_trapezoid
 from tqdm import tqdm
 
-# PARALLELIZATION
-from joblib import Parallel, delayed
+from src.utils.common import apply_overrides
 
-# here gen_data_GRF can generate u and v with respect to different x
+# Set DeepXDE backend
+os.environ['DDE_BACKEND'] = 'pytorch'
 
-# solve pde using finite difference method
+
+# --- Integrators ---
+
 def compute_numerical_solution(x, v, N):
-    h = x[1]-x[0]
-    #Kx=b
-    K = 1 * np.eye(N-1) - np.eye(N-1,k=-1)
-    b = h* v[1:]
-    u = np.linalg.solve(K,b)
+    """Solve u' = v with u(0)=0 using backward differences (lower-triangular system)."""
+    h = x[1] - x[0]
+    K = np.eye(N - 1) - np.eye(N - 1, k=-1)
+    b = h * v[1:]
+    u = np.linalg.solve(K, b)
     return np.concatenate(([0], u))
 
 
-def generate_sample(M):
-    """PARALLEL CODE"""
-    # VARY LENGTH SCALE
-    l_rand = np.random.uniform(0.2, 1.3)
-    # VERY AMPLITUDE
-    a_rand = np.random.uniform(0.5, 1.5)
-    space = GRF(1, kernel='RBF', length_scale=l_rand, N=M, interp='cubic')
+def scipy_integrator(x, v):
+    """Compute trapezoidal integral of v over x with u(x[0])=0."""
+    return np.concatenate(([0], cumulative_trapezoid(v, x)))
+
+
+INTEGRATORS = {
+    "custom": compute_numerical_solution,
+    "scipy": scipy_integrator,
+}
+
+
+# --- Config dataclass ---
+
+@dataclass
+class Config:
+    M: int = 1000
+    Nu: int = 30
+    Nv: int = 10
+    amplitude: Union[List[float], float] = field(default_factory=lambda: [0.5, 1.5])
+    length_scale: Union[List[float], float] = field(default_factory=lambda: [0.5, 1.3])
+    interp: str = "cubic"
+    noise: float = 1e-4
+    n_jobs: int = 8
+    test: int = 500
+    train: int = 1500
+    val: int = 500
+    downsample: str = "random"
+    integrator: str = "custom"
+    seed: int = field(default_factory=lambda: secrets.randbits(32))
+    dry_run: bool = False
+
+
+# --- Core functions ---
+
+def generate_sample(M, interp, length_range, amp_range, integrator):
+    length = np.random.uniform(*length_range)
+    amplitude = np.random.uniform(*amp_range)
+    space = GRF(1, kernel='RBF', length_scale=length, N=M, interp=interp)
     x = np.ravel(space.x)
-    v = np.ravel(a_rand * space.random(1))
-    u = compute_numerical_solution(x, v, M)
+    v = np.ravel(amplitude * space.random(1))
+    u = integrator(x, v)
     return v, u
 
-def gen_data_GRF(M, Nv,Nu, a=1,l=1,train = 150, test = 100):
-    """Generate functions"""
-    # generate v and compute u in a dense grid with size M
-    # x in [0,1] GRF.x.shape = [1, M]
-    # l: lenth scale, a is the amplitude
 
-    # INITIALIZE X
-    space = GRF(1, kernel = 'RBF', length_scale = l, N = M, interp = 'cubic')
-    x = np.ravel(space.x)
+def downsample_indices(M, N, mode="random"):
+    if mode == "uniform":
+        return [round(M / N) * i for i in range(N - 1)] + [M - 1]
+    return sorted(np.random.choice(M, N, replace=False))
 
-    # VERY SMALL NOISE
-    noise_level = 1e-4
 
-    # NO NEED FOR INITIALIZATION
-    # v_full = []
-    # u_full = []
+def save_split(filename, v, u, x, Nv, Nu, downsample_mode):
+    idx_v = downsample_indices(len(x), Nv, downsample_mode)
+    idx_u = downsample_indices(len(x), Nu, downsample_mode)
+    xv = x[idx_v]
+    xu = x[idx_u]
 
-    # COMMENT THIS OUT, USE PARALLEL CODE INSTEAD
-    """
-    for _ in tqdm(range(train)):
+    v = v[:, idx_v]
+    u = u[:, idx_u]
 
-        v = np.ravel(a_rand * space.random(1)) # space.random(1) shape = [1, M], v.shape = [M,1]
-        u = compute_numerical_solution(x,v,M) #u.shape = [M]
-        v_full.append(v)
-        u_full.append(u)
-        # plt.figure()
-        # plt.plot(x,v,label='v')
-        # plt.plot(x,u,label='u')
-        # plt.legned()
-        # plt.show()
-    """
+    np.savez_compressed(filename, X0=v, X1=xu.reshape(-1, 1), y=u, X0_p=xv.reshape(-1, 1))
 
-    # PARALLEL LOOP
-    results = Parallel(n_jobs=-1)(delayed(generate_sample)(M) for _ in tqdm(range(train)))
-    v_full, u_full = zip(*results)
-    v_full = np.array(v_full, dtype=np.float32)
-    u_full = np.array(u_full, dtype=np.float32)
 
-    np.savez_compressed('data_ode_simple/full_aligned_train.npz',X0 = v_full, X1 = x.reshape(-1,1) , y = u_full)
+def generate_and_save_split(split_name: str, config: Config, integrator):
+    num_samples = getattr(config, split_name)
 
-    # COMMENT OUT, INCREASE SAMPLE DIVERSITY
-    """
-    # down sampling and take N points
-    index_v = [round(M/Nv)*i for i in range(Nv-1)]+[M-1]
-    index_u = [round(M/Nu)*i for i in range(Nu-1)]+[M-1]
-    """
+    if config.dry_run:
+        logging.info(f"[DRY RUN] Generating 3 samples for {split_name}")
+        num_samples = 3
 
-    # INCREASE SAMPLE DIVERSITY
-    index_v = np.sort(np.random.choice(M, Nv, replace=False))
-    index_u = np.sort(np.random.choice(M, Nu, replace=False))
+    results = Parallel(n_jobs=config.n_jobs)(
+        delayed(generate_sample)(config.M, config.interp, _to_range(config.length_scale),
+                                 _to_range(config.amplitude), integrator)
+        for _ in tqdm(range(num_samples), desc=f"Generating {split_name}")
+    )
 
-    v = v_full[:,index_v]
-    xv = x[index_v]
-    xu = x[index_u]
-    u = u_full[:,index_u]
+    v_all, u_all = zip(*results)
+    v_all = np.array(v_all, dtype=np.float32)
+    u_all = np.array(u_all, dtype=np.float32)
+    x = np.ravel(GRF(1, 'RBF', length_scale=1.0, N=config.M, interp=config.interp).x)
 
-    # ADD VERY SMALL AMOUNT OF NOISE
-    v += np.random.normal(0, noise_level, size=v.shape)
-    u += np.random.normal(0, noise_level, size=u.shape)
+    v_all = v_all[:, :] + np.random.normal(0, config.noise, size=(v_all.shape[0], v_all.shape[1]))
+    u_all = u_all[:, :] + np.random.normal(0, config.noise, size=(u_all.shape[0], u_all.shape[1]))
 
-    np.savez_compressed('data_ode_simple/picked_aligned_train.npz',X0 = v, X1 = xu.reshape(-1,1) , y = u,  X0_p = xv.reshape(-1,1))
+    if config.dry_run:
+        import matplotlib.pyplot as plt
+        os.makedirs("data/data_ode_simple", exist_ok=True)
 
-    #test data
-    # RAVEL INSIDE LOOP INSTEAD
-    # x = np.ravel(space.x)
-    v_full = []
-    u_full = []
+        for i in range(min(3, len(v_all))):
+            plt.figure(figsize=(8, 4))
+            plt.plot(x, v_all[i], label='v (source term)')
+            plt.plot(x, u_all[i], label='u (solution)')
+            plt.title(f"{split_name} sample {i}")
+            plt.xlabel("x")
+            plt.ylabel("Value")
+            plt.legend()
+            plt.grid(True)
+            plt.tight_layout()
+            plt.savefig(f"data/data_ode_simple/{split_name}_sample_{i}.png")
+            plt.close()
 
-    # COMMENT THIS OUT, USE PARALLEL CODE INSTEAD
-    """
-    for _ in range(test):
+        logging.info(f"Saved sample plots for dry run in data/data_ode_simple/")
+        return
 
-        v = np.ravel(a_rand * space.random(1)) # space.random(1) shape = [1, M], v.shape = [M,1]
-        u = compute_numerical_solution(x,v,M) #u.shape = [M]
-        v_full.append(v)
-        u_full.append(u)
-        # plt.figure()
-        # plt.plot(x,v,label='v')
-        # plt.plot(x,u,label='u')
-        # plt.legned()
-        # plt.show()
-    """
+    os.makedirs("data/data_ode_simple", exist_ok=True)
 
-    # PARALLEL LOOP
-    results = Parallel(n_jobs=-1)(delayed(generate_sample)(M) for _ in tqdm(range(test)))
-    v_full, u_full = zip(*results)
-    v_full = np.array(v_full, dtype=np.float32)
-    u_full = np.array(u_full, dtype=np.float32)
+    np.savez_compressed(
+        f'data/data_ode_simple/full_aligned_{split_name}.npz',
+        X0=v_all, X1=x.reshape(-1, 1), y=u_all
+    )
 
-    v_full = np.array(v_full,dtype=np.float32)
-    u_full = np.array(u_full,dtype=np.float32)
-    np.savez_compressed('data_ode_simple/full_aligned_test.npz',X0 = v_full, X1 = x.reshape(-1,1) , y = u_full)
+    save_split(
+        f'data/data_ode_simple/picked_aligned_{split_name}.npz',
+        v_all, u_all, x, config.Nv, config.Nu, config.downsample
+    )
 
-    # COMMENT OUT, INCREASE SAMPLE DIVERSITY
-    """
-    # down sampling and take N points
-    index_v = [round(M/Nv)*i for i in range(Nv-1)]+[M-1]
-    index_u = [round(M/Nu)*i for i in range(Nu-1)]+[M-1]
-    """
 
-    # INCREASE SAMPLE DIVERSITY
-    index_v = np.sort(np.random.choice(M, Nv, replace=False))
-    index_u = np.sort(np.random.choice(M, Nu, replace=False))
+def _to_range(value):
+    """Convert scalar or list to a range (2-element list)."""
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        return value
+    return [value, value]
 
-    v = v_full[:,index_v]
-    xv = x[index_v]
-    xu = x[index_u]
-    u = u_full[:,index_u]
 
-    # ADD VERY SMALL AMOUNT OF NOISE
-    v += np.random.normal(0, noise_level, size=v.shape)
-    u += np.random.normal(0, noise_level, size=u.shape)
+# --- Seed and YAML loading ---
 
-    np.savez_compressed('data_ode_simple/picked_aligned_test.npz',X0 = v, X1 = xu.reshape(-1,1) , y = u,  X0_p = xv.reshape(-1,1))
+def set_seed(seed):
+    np.random.seed(seed)
+    import random
+    random.seed(seed)
+    try:
+        import torch
+        torch.manual_seed(seed)
+    except ImportError:
+        pass
+    logging.info(f"Using random seed: {seed}")
 
-# CHANGE L HERE
-if __name__ == '__main__':
-    # gen_data_GRF(1000,Nv = 10,Nu = 30,l=1,train = 200, test = 100)
 
-    # MORE DIVERSE TRAIN AND TEST SET
-    gen_data_GRF(1000, Nv=10, Nu=30, l=0.5, train=1500, test=500)
+def load_config(yaml_path: str) -> Config:
+    with open(yaml_path, "r") as f:
+        data = yaml.safe_load(f)
+    return Config(**data)
+
+
+# --- Entry point ---
+
+def main():
+    parser = argparse.ArgumentParser(description="Generate GRF-based data for DeepONet training.")
+    parser.add_argument("--config", type=str, default="default", help="Config file name"
+    )
+    parser.add_argument("--seed", type=int, help="Random seed (overrides config)")
+    parser.add_argument("--dry_run", action="store_true", help="Run a small test without saving files")
+    parser.add_argument("--override", nargs='*', help="Optional overrides in key=value format")
+
+    args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    args.config = os.path.join("configs/data_generation", args.config + ".yaml")
+    config = load_config(args.config) if args.config else Config()
+    apply_overrides(config, args.override)
+
+    if args.seed is not None:
+        config.seed = args.seed
+    if args.dry_run:
+        config.dry_run = True
+
+    set_seed(config.seed)
+    integrator = INTEGRATORS[config.integrator]
+
+    for split in ["train", "val", "test"]:
+        generate_and_save_split(split, config, integrator)
+
+
+if __name__ == "__main__":
+    main()

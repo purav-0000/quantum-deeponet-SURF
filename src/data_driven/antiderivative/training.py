@@ -1,126 +1,167 @@
-import numpy as np
-import deepxde as dde
-
-# MAKE DIR BEFORE SAVING
+import argparse
+import json
+import logging
 import os
-
-# SET SEEDS OF THESE LIBRARIES
 import random
-import torch
-import torch.profiler
-
-# REMOVING RELATIVE IMPORT
-from src.classical_orthogonal_deeponet import OrthoONetCartesianProd
-
-# RANDOM SEED FOR INITIALIZATION
 import secrets
-seed = secrets.randbits(32)
-print(f"Random hardware-backed seed: {seed}")
+from dataclasses import dataclass, field
+from typing import Optional
 
-dde.config.set_random_seed(seed)
-torch.manual_seed(seed)
-np.random.seed(seed)
-random.seed(seed)
+import deepxde as dde
+import numpy as np
+import torch
+import yaml
 
-print("Torch initial seed: ", torch.initial_seed())
+from src.classical_orthogonal_deeponet import OrthoONetCartesianProd
+from src.utils.common import apply_overrides, load_dataset, normalize_bounds, transform_input
 
 
-def trunk_transform(x, trunk_min, trunk_max):
-    d = x.shape[1]
-    x = 2 * (x - trunk_min) / (trunk_max - trunk_min) - 1  # Rescale to [-1, 1]
-    x = x / np.sqrt(d)
-    x_d1 = np.sqrt(1 - np.sum(x**2, axis=1, keepdims=True))
-    return np.concatenate((x, x_d1), axis=1)
+# --- Config and logging ---
 
-def branch_transform(x, branch_min, branch_max):
-    # For 2-dimensional input
-    d = x.shape[1]
-    x = 2 * (x - branch_min) / (branch_max - branch_min) - 1  # Rescale to [-1, 1]
-    x = x / np.sqrt(d)
-    x_d1 = np.sqrt(1 - np.sum(x**2, axis=1, keepdims=True))
-    return np.concatenate((x, x_d1), axis=1)
+@dataclass
+class Config:
+    """Configuration schema for training."""
+    bootstrap: bool = False
+    data_dir: str = "data_ode_simple"
+    ensemble: int = 0
+    ensemble_name: Optional[str] = None
+    iterations: int = 30000
+    lr: float = 0.001
+    model_name: Optional[str] = None
+    seed: Optional[int] = field(default_factory=lambda: secrets.randbits(32))
 
-def main():
-    # ADD ../../../data/data_ode_simple/ TO PATH
-    d1 = np.load(r'../../../data/data_ode_simple/picked_aligned_train.npz',allow_pickle=True)
-    # x_train,y_train = (d1['X0'].astype(np.float32),d1['X1'].astype(np.float32)),d1['y'].astype(np.float32)
-    # FOR BOOTSTRAPPING
-    x_train_full, y_train_full = (d1['X0'].astype(np.float32), d1['X1'].astype(np.float32)), d1['y'].astype(np.float32)
+    # Custom layer sizes
+    branch_hidden: int = 10
+    trunk_hidden: int = 10
+    shared_output: int = 10  # Output layer size must be shared
 
-    # ADD ../../../data/data_ode_simple/ TO PATH
-    d2 = np.load(r'../../../data/data_ode_simple/picked_aligned_test.npz',allow_pickle=True)
-    x_test,y_test = (d2['X0'].astype(np.float32),d2['X1'].astype(np.float32)),d2['y'].astype(np.float32)
 
-    # PASS _FULL SUFFIX VARIABLES WHEN BOOTSTRAPPING
-    trunk_min = np.min( np.stack((np.min(x_train_full[1], axis=0),np.min(x_test[1], axis=0)),axis=0),axis=0)
-    trunk_max = np.max( np.stack((np.max(x_train_full[1], axis=0),np.max(x_test[1], axis=0)),axis=0),axis=0)
-    branch_min = np.min(np.stack((np.min(x_train_full[0], axis=0),np.min(x_test[0], axis=0)),axis=0),axis=0)
-    branch_max = np.max( np.stack((np.max(x_train_full[0], axis=0),np.max(x_test[0], axis=0)),axis=0),axis=0)
+def load_config(path: str) -> Config:
+    """Load configuration from a YAML file."""
+    with open(path, "r") as f:
+        data = yaml.safe_load(f)
+    return Config(**data)
 
-    """
-    # CREATE BOOTSTRAP SAMPLES
-    n_train = y_train_full.shape[0]
-    bootstrap_indices = np.random.choice(n_train, n_train, replace=True)
-    print(len(np.setdiff1d(np.array(range(0, 1001)), bootstrap_indices)))
-    x_train_bootstrap = (x_train_full[0][bootstrap_indices], x_train_full[1])
-    y_train_bootstrap = y_train_full[bootstrap_indices]
 
-    print((x_train_full[0] < 0).sum())
-    """
-    # COMMENT OUT WHEN BOOTSTRAPPING
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 
-    # MOVING TRUNK_MIN AND TRUNK_MAX INTO TRUNK_TRANSFORM AS ARGUMENTS
-    x_train = (branch_transform(x_train_full[0], branch_min, branch_max),
-               trunk_transform(x_train_full[1], trunk_min, trunk_max))
+# --- Utility functions ---
 
-    """
-    # TRANSFORM BOOTSTRAP SAMPLES
-    x_train_bootstrap = (branch_transform(x_train_bootstrap[0], branch_min, branch_max),
-                         trunk_transform(x_train_bootstrap[1], trunk_min, trunk_max))
-    """
-    # MOVING BRANCH_MIN AND BRANCH_MAX INTO BRANCH_TRANSFORM AS ARGUMENTS
-    # AND MOVING TRUNK_MIN AND TRUNK_MAX INTO TRUNK_TRANSFORM AS ARGUMENTS
-    x_test = (branch_transform(x_test[0], branch_min, branch_max),
-              trunk_transform(x_test[1], trunk_min, trunk_max))
+def set_seeds(seed: int):
+    """Set all relevant seeds for reproducibility."""
+    dde.config.set_random_seed(seed)
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
 
-    print(x_train[0].shape)
 
-    # PASS BOOTSTRAP SAMPLES
-    # import pdb;pdb.set_trace()
-    data = dde.data.TripleCartesianProd(
-        X_train = x_train, y_train = y_train_full, X_test = x_test, y_test = y_test
+# --- Training function ---
+def train_model(
+    config: Config,
+    data_dir: str,
+    model_dir: str,
+    seed: int,
+    lr: float,
+    iterations: int,
+    bootstrap: bool = False
+):
+    """Train a single DeepONet model."""
+    set_seeds(seed)
+
+    # Load dataset
+    x_train_full, y_train_full, x_val, y_val, x_test, y_test = load_dataset(data_dir)
+
+    # Normalize input bounds for both branch and trunk inputs
+    bounds = normalize_bounds(x_train_full, x_test, x_val)
+
+    # Optional bootstrapping of training samples
+    if bootstrap:
+        n_train = y_train_full.shape[0]
+        indices = np.random.choice(n_train, n_train, replace=True)
+        x_train = (x_train_full[0][indices], x_train_full[1])
+        y_train = y_train_full[indices]
+    else:
+        x_train = x_train_full
+        y_train = y_train_full
+
+
+    # Normalize data to [-1, 1]
+    x_train = (
+        transform_input(x_train[0], bounds["branch_min"], bounds["branch_max"]),
+        transform_input(x_train[1], bounds["trunk_min"], bounds["trunk_max"])
     )
-    #choose network
-    m = 10
-    dim_x = 1
+    x_test = (
+        transform_input(x_test[0], bounds["branch_min"], bounds["branch_max"]),
+        transform_input(x_test[1], bounds["trunk_min"], bounds["trunk_max"])
+    )
 
-    # CHANGING ACTIVATION FUNCTION FROM RELU TO SILU
+    # Prepare data loader
+    data = dde.data.TripleCartesianProd(X_train=x_train, y_train=y_train, X_test=x_test, y_test=y_test)
+
+    # Model definition
+    m = x_train[0].shape[1]
+    dim_x = x_train[1].shape[1]
+    layer_sizes_branch = [m, config.branch_hidden, config.shared_output]
+    layer_sizes_trunk = [dim_x, config.trunk_hidden, config.shared_output]
+
     net = OrthoONetCartesianProd(
-        [m+1,10,10],
-        [dim_x+1,10,10],
-        'silu'
+        layer_sizes_branch=layer_sizes_branch,
+        layer_sizes_trunk=layer_sizes_trunk,
+        activation="silu"
     )
+    model = dde.Model(data, net)
+    model.compile("adam", lr=lr, metrics=["mean l2 relative error"])
+
+    # Train
+    losshistory, train_state = model.train(iterations=iterations, disregard_previous_best=True)
+
+    # Save outputs
+    os.makedirs(model_dir, exist_ok=True)
+    model.save(os.path.join(model_dir, "model_checkpoint"))
+    dde.utils.external.save_loss_history(losshistory, os.path.join(model_dir, "loss_history.txt"))
+
+    # Save weights
+    for name, param in model.net.named_parameters():
+        np.savetxt(os.path.join(model_dir, f"{name}.txt"), param.cpu().detach().numpy())
+
+    # Save training config and seed
+    with open(os.path.join(model_dir, "seed.txt"), "w") as f:
+        f.write(str(seed))
+    with open(os.path.join(model_dir, "config_used.json"), "w") as f:
+        json.dump(config.__dict__, f, indent=2)
 
 
-    model = dde.Model(data,net)
-    model.compile('adam',lr=0.001,metrics=['mean l2 relative error'])
-    # torch.autograd.set_detect_anomaly(True)
+# --- Main entry point ---
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=str, default="default", help="Config file name")
+    parser.add_argument("--override", nargs='*', help="Optional overrides in key=value format")
+    args = parser.parse_args()
+    args.config = os.path.join("configs/training", args.config + ".yaml")
+    config = load_config(args.config)
+    apply_overrides(config, args.override)
 
-    losshistory, train_state = model.train(iterations=30000,disregard_previous_best = True)
+    data_path = os.path.join("data", config.data_dir)
 
-    # SET DIR NAME RELATED TO SEED
-    save_dir = f'classical_training_seed{seed}'
+    if config.ensemble > 0:
+        base_seed = config.seed
+        ensemble_name = config.ensemble_name or f"ensemble_seed{base_seed}"
+        ensemble_dir = os.path.join("models", "ensembles", ensemble_name)
 
-    # MAKE DIRECTORY BEFORE SAVING
-    os.makedirs(save_dir, exist_ok=True)
+        for i in range(config.ensemble):
+            seed_i = base_seed if i == 0 else secrets.randbits(32)
+            model_name = f"model{i}"
+            model_dir = os.path.join(ensemble_dir, model_name)
+            logging.info(f"Training ensemble model {i+1}/{config.ensemble} (seed={seed_i})...")
+            train_model(config, data_path, model_dir, seed_i, config.lr, config.iterations, config.bootstrap)
+    else:
+        model_name = config.model_name or f"seed{config.seed}"
+        model_dir = os.path.join("models", model_name)
+        logging.info(f"Training single model (seed={config.seed})...")
+        train_model(config, data_path, model_dir, config.seed, config.lr, config.iterations, config.bootstrap)
 
-    dde.utils.external.save_loss_history(losshistory, f'{save_dir}/loss_history.txt')
-    dde_model = model.net
-    model.save(f'{save_dir}/model_checkpoint')
 
-    for name, param in dde_model.named_parameters():
-        np.savetxt(f'{save_dir}/{name}.txt', param.cpu().detach().numpy())
-
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
+
+

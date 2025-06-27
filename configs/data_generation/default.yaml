@@ -1,0 +1,14 @@
+M: 1000
+Nu: 30
+Nv: 10
+amplitude: 1
+length_scale: 1
+interp: cubic
+noise: 0.0
+n_jobs: 8
+test: 200
+train: 1000
+val: 200
+downsample: uniform
+integrator: scipy
+dry_run: false
