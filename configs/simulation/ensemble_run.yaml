@@ -6,3 +6,4 @@ simulator: "CPU"
 mode: "ideal"
 shots: 0
 batch_size: null
+coverage: 0.9

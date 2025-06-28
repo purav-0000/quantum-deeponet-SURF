@@ -14,7 +14,7 @@ from tqdm import tqdm
 
 from qiskit_aer import AerSimulator
 from src.quantum_layer_ideal import data_loader, W
-from src.utils.common import apply_overrides, load_dataset, normalize_bounds, transform_input
+from src.utils.common import apply_overrides, load_dataset, load_calibration_dataset, normalize_bounds, transform_input
 from src.utils.simulation import build_circuit, evaluate_model, load_weights, plot_pred, silu
 
 
@@ -32,6 +32,7 @@ class Config:
     mode: str = "ideal"  # or "shots"
     shots: int = 0
     batch_size: Optional[int] = None
+    coverage: float = 0.9
 
 
 def load_config(path: str) -> Config:
@@ -198,8 +199,16 @@ def main():
         model_dirs = [os.path.join(ensemble_dir, m) for m in os.listdir(ensemble_dir) if os.path.isdir(os.path.join(ensemble_dir, m))]
 
         selected_models = greedy_ensemble(model_dirs, x_val, y_val, simulator, config) if config.greedy else model_dirs
+
+        # Calculate calibration scores
+        x_cal, y_cal = load_calibration_dataset(data_path)
+        outputs = [run_model(m, x_cal, simulator, config) for m in selected_models]
+        scores = np.abs(y_cal - np.mean(outputs, axis=0)) / np.std(outputs, axis=0)
+        n = len(scores)
+        q = np.ceil((n + 1) * (1 - config.coverage)) / n
+
         outputs = [run_model(m, x_test, simulator, config) for m in selected_models]
-        plot_pred(x_test, y_test, np.array(outputs), ensemble_dir, x_test_plot, confidence=True)
+        plot_pred(x_test, y_test, np.array(outputs), ensemble_dir, x_test_plot, q, confidence=True)
     else:
         model_path = os.path.join("models", config.model)
         y_pred = run_model(model_path, x_test, simulator, config)

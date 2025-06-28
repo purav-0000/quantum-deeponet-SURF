@@ -12,6 +12,10 @@ def load_dataset(DATA_DIR):
         (test['X0'].astype(np.float32), test['X1'].astype(np.float32)), test['y'].astype(np.float32), \
         test['X0_plot'].astype(np.float32)
 
+def load_calibration_dataset(DATA_DIR):
+    cal = np.load(os.path.join(DATA_DIR, 'picked_aligned_calibration.npz'), allow_pickle=True)
+
+    return (cal['X0'].astype(np.float32), cal['X1'].astype(np.float32)), cal['y'].astype(np.float32)
 
 def normalize_bounds(x_train, x_test, x_val=None):
     def get_min_max(idx):

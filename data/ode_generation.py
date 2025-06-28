@@ -55,6 +55,7 @@ class Config:
     test: int = 500
     train: int = 1500
     val: int = 500
+    calibration: int = 500
     downsample: str = "random"
     integrator: str = "custom"
     seed: int = field(default_factory=lambda: secrets.randbits(32))
@@ -118,8 +119,22 @@ def generate_and_save_split(split_name: str, config: Config, integrator):
 
         for i in range(min(3, len(v_all))):
             plt.figure(figsize=(8, 4))
-            plt.plot(x, v_all[i], label='v (source term)')
-            plt.plot(x, u_all[i], label='u (solution)')
+            plt.plot(x, v_all[i], label='Underlying v (source term)', color="blue")
+            plt.plot(x, u_all[i], label='Underlying u (solution)', color="red")
+
+            # Plot what the model sees
+            idx_v = downsample_indices(len(x), config.Nv, config.downsample)
+            idx_u = downsample_indices(len(x), config.Nu, config.downsample)
+
+            xv = x[idx_v]
+            xu = x[idx_u]
+
+            v_idx = v_all[:, idx_v]
+            u_idx = u_all[:, idx_u]
+
+            plt.plot(xv, v_idx[i], label='Indexed v (source term)', color="blue", alpha=0.9, linestyle="dashed")
+            plt.plot(xu, u_idx[i], label='Indexed u (solution)', color="red", alpha=0.9, linestyle="dashed")
+
             plt.title(f"{split_name} sample {i}")
             plt.xlabel("x")
             plt.ylabel("Value")
@@ -190,6 +205,9 @@ def main():
     config = load_config(args.config) if args.config else Config()
     apply_overrides(config, args.override)
 
+    if config.dry_run or args.dry_run:
+        config.n_jobs = 1
+
     if args.seed is not None:
         config.seed = args.seed
     if args.dry_run:
@@ -198,7 +216,7 @@ def main():
     set_seed(config.seed)
     integrator = INTEGRATORS[config.integrator]
 
-    for split in ["train", "val", "test"]:
+    for split in ["train", "val", "test", "calibration"]:
         generate_and_save_split(split, config, integrator)
 
 
