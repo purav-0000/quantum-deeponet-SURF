@@ -17,11 +17,9 @@ def load_calibration_dataset(DATA_DIR):
 
     return (cal['X0'].astype(np.float32), cal['X1'].astype(np.float32)), cal['y'].astype(np.float32)
 
-def normalize_bounds(x_train, x_test, x_val=None):
+def normalize_bounds(x_train, x_test, x_val, x_cal):
     def get_min_max(idx):
-        arrays = [x_train[idx], x_test[idx]]
-        if x_val is not None:
-            arrays.append(x_val[idx])
+        arrays = [x_train[idx], x_test[idx], x_val[idx], x_cal[idx]]
         concatenated = np.concatenate(arrays, axis=0)
         return np.min(concatenated, axis=0), np.max(concatenated, axis=0)
 

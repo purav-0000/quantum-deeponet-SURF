@@ -13,7 +13,7 @@ import torch
 import yaml
 
 from src.classical_orthogonal_deeponet import OrthoONetCartesianProd
-from src.utils.common import apply_overrides, load_dataset, normalize_bounds, transform_input
+from src.utils.common import apply_overrides, load_dataset, load_calibration_dataset, normalize_bounds, transform_input
 
 
 # --- Config and logging ---
@@ -70,9 +70,10 @@ def train_model(
 
     # Load dataset
     x_train_full, y_train_full, x_val, y_val, x_test, y_test, _ = load_dataset(data_dir)
+    x_cal, y_cal = load_calibration_dataset(data_dir)
 
     # Normalize input bounds for both branch and trunk inputs
-    bounds = normalize_bounds(x_train_full, x_test, x_val)
+    bounds = normalize_bounds(x_train_full, x_test, x_val, x_cal)
 
     # Optional bootstrapping of training samples
     if bootstrap:

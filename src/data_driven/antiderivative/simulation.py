@@ -184,7 +184,9 @@ def main():
 
     # Normalizing and transforming
     x_train, y_train, x_val, y_val, x_test, y_test, x_test_plot = load_dataset(data_path)
-    bounds = normalize_bounds(x_train, x_test, x_val)
+    x_cal, y_cal = load_calibration_dataset(data_path)
+
+    bounds = normalize_bounds(x_train, x_test, x_val, x_cal)
     x_val = (
         transform_input(x_val[0], bounds["branch_min"], bounds["branch_max"]),
         transform_input(x_val[1], bounds["trunk_min"], bounds["trunk_max"]),
@@ -192,6 +194,10 @@ def main():
     x_test = (
         transform_input(x_test[0], bounds["branch_min"], bounds["branch_max"]),
         transform_input(x_test[1], bounds["trunk_min"], bounds["trunk_max"]),
+    )
+    x_cal = (
+        transform_input(x_cal[0], bounds["branch_min"], bounds["branch_max"]),
+        transform_input(x_cal[1], bounds["trunk_min"], bounds["trunk_max"]),
     )
 
     if config.ensemble:
@@ -201,7 +207,6 @@ def main():
         selected_models = greedy_ensemble(model_dirs, x_val, y_val, simulator, config) if config.greedy else model_dirs
 
         # Calculate calibration scores
-        x_cal, y_cal = load_calibration_dataset(data_path)
         outputs = [run_model(m, x_cal, simulator, config) for m in selected_models]
         scores = np.abs(y_cal - np.mean(outputs, axis=0)) / np.std(outputs, axis=0)
         n = len(scores)
