@@ -58,7 +58,7 @@ def build_circuit(x_input0, n_in, n_out, W_gate, loader_special_gate, loader_inv
     return transpile(circ, simulator)
 
 
-def plot_pred(x_test, y_test, y_pred, save_path, x_test_plot, q=0.9, confidence=False):
+def plot_pred(x_test, y_test, y_pred, save_path, x_test_plot, q_hat, confidence=False):
 
     ensemble = False
     # Check if ensemble or single model
@@ -91,8 +91,9 @@ def plot_pred(x_test, y_test, y_pred, save_path, x_test_plot, q=0.9, confidence=
             std_pred = samples.std(axis=0)
 
             ax.plot(x_trunk, mean_pred, 'b-', label="Prediction")
-            ax.fill_between(x_trunk, mean_pred - q * std_pred, mean_pred + q * std_pred, color='blue', alpha=0.3,
-                            label="2σ Interval")
+            lower = mean_pred - q_hat * std_pred
+            upper = mean_pred + q_hat * std_pred
+            ax.fill_between(x_trunk, lower, upper, color='blue', alpha=0.3, label="Conformal Interval")
         else:   # Single model
             ax.plot(x_trunk, y_pred[idx, :], 'b-', label="Prediction")
 
