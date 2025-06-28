@@ -85,10 +85,10 @@ def save_split(filename, v, u, x, Nv, Nu, downsample_mode):
     xv = x[idx_v]
     xu = x[idx_u]
 
-    v = v[:, idx_v]
-    u = u[:, idx_u]
+    v_idx = v[:, idx_v]
+    u_idx = u[:, idx_u]
 
-    np.savez_compressed(filename, X0=v, X1=xu.reshape(-1, 1), y=u, X0_p=xv.reshape(-1, 1))
+    np.savez_compressed(filename, X0=v_idx, X1=xu.reshape(-1, 1), y=u_idx, X0_plot=v[:, idx_u])
 
 
 def generate_and_save_split(split_name: str, config: Config, integrator):

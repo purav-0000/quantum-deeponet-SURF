@@ -69,7 +69,7 @@ def train_model(
     set_seeds(seed)
 
     # Load dataset
-    x_train_full, y_train_full, x_val, y_val, x_test, y_test = load_dataset(data_dir)
+    x_train_full, y_train_full, x_val, y_val, x_test, y_test, _ = load_dataset(data_dir)
 
     # Normalize input bounds for both branch and trunk inputs
     bounds = normalize_bounds(x_train_full, x_test, x_val)

@@ -182,7 +182,7 @@ def main():
     data_path = os.path.join("data", config.data_dir)
 
     # Normalizing and transforming
-    x_train, y_train, x_val, y_val, x_test, y_test = load_dataset(data_path)
+    x_train, y_train, x_val, y_val, x_test, y_test, x_test_plot = load_dataset(data_path)
     bounds = normalize_bounds(x_train, x_test, x_val)
     x_val = (
         transform_input(x_val[0], bounds["branch_min"], bounds["branch_max"]),
@@ -199,12 +199,12 @@ def main():
 
         selected_models = greedy_ensemble(model_dirs, x_val, y_val, simulator, config) if config.greedy else model_dirs
         outputs = [run_model(m, x_test, simulator, config) for m in selected_models]
-        plot_pred(x_test, y_test, np.array(outputs), ensemble_dir, confidence=True)
+        plot_pred(x_test, y_test, np.array(outputs), ensemble_dir, x_test_plot, confidence=True)
     else:
         model_path = os.path.join("models", config.model)
         y_pred = run_model(model_path, x_test, simulator, config)
         evaluate_model(y_pred, y_test, verbose=True, save_dir=model_path, model_name=os.path.basename(model_path))
-        plot_pred(x_test, y_test, y_pred, model_path)
+        plot_pred(x_test, y_test, y_pred, model_path, x_test_plot)
 
 
 if __name__ == "__main__":

@@ -6,9 +6,11 @@ def load_dataset(DATA_DIR):
     train = np.load(os.path.join(DATA_DIR, 'picked_aligned_train.npz'), allow_pickle=True)
     val = np.load(os.path.join(DATA_DIR, 'picked_aligned_val.npz'), allow_pickle=True)
     test = np.load(os.path.join(DATA_DIR, 'picked_aligned_test.npz'), allow_pickle=True)
+
     return (train['X0'].astype(np.float32), train['X1'].astype(np.float32)), train['y'].astype(np.float32), \
         (val['X0'].astype(np.float32), val['X1'].astype(np.float32)), val['y'].astype(np.float32), \
-        (test['X0'].astype(np.float32), test['X1'].astype(np.float32)), test['y'].astype(np.float32)
+        (test['X0'].astype(np.float32), test['X1'].astype(np.float32)), test['y'].astype(np.float32), \
+        test['X0_plot'].astype(np.float32)
 
 
 def normalize_bounds(x_train, x_test, x_val=None):

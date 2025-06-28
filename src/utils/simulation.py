@@ -5,6 +5,7 @@ import os
 from qiskit import transpile
 
 from src.quantum_layer_ideal import custom_tomo_fast
+from src.utils.common import load_dataset
 
 def silu(x):
     return x / (1 + np.exp(-x))
@@ -57,7 +58,7 @@ def build_circuit(x_input0, n_in, n_out, W_gate, loader_special_gate, loader_inv
     return transpile(circ, simulator)
 
 
-def plot_pred(x_test, y_test, y_pred, save_path, confidence=False):
+def plot_pred(x_test, y_test, y_pred, save_path, x_test_plot, confidence=False):
 
     ensemble = False
     # Check if ensemble or single model
@@ -67,15 +68,19 @@ def plot_pred(x_test, y_test, y_pred, save_path, confidence=False):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     save_path = os.path.join(save_path, timestamp)
 
-    indices = np.random.choice(len(y_test), size=10, replace=False)
-    fig, axs = plt.subplots(10, 1, figsize=(15, 50), sharex=True, sharey=True)
+    indices = np.random.choice(len(y_test), size=15, replace=False)
+    fig, axs = plt.subplots(15, 1, figsize=(15, 50), sharex=True, sharey=True)
 
     # Select trunk inputs
-    x = x_test[1][:, 0]
+    x_trunk = x_test[1][:, 0]
     for ax, idx in zip(axs, indices):
 
+        # Select input function
+        x_branch = x_test_plot[idx, :]
+        ax.plot(x_trunk, x_branch, color='orange', alpha=0.8, label="Input")
+
         y = y_test[idx]
-        ax.plot(x, y, 'r-', label="Ground Truth")
+        ax.plot(x_trunk, y, 'r-', label="Ground Truth")
 
         # Check if ensembles or single model
         if ensemble:  # Ensemble
@@ -85,11 +90,11 @@ def plot_pred(x_test, y_test, y_pred, save_path, confidence=False):
             mean_pred = samples.mean(axis=0)
             std_pred = samples.std(axis=0)
 
-            ax.plot(x, mean_pred, 'b-', label="Prediction")
-            ax.fill_between(x, mean_pred - 2 * std_pred, mean_pred + 2 * std_pred, color='blue', alpha=0.3,
+            ax.plot(x_trunk, mean_pred, 'b-', label="Prediction")
+            ax.fill_between(x_trunk, mean_pred - 2 * std_pred, mean_pred + 2 * std_pred, color='blue', alpha=0.3,
                             label="2σ Interval")
         else:   # Single model
-            ax.plot(x, y_pred[idx, :], 'b-', label="Prediction")
+            ax.plot(x_trunk, y_pred[idx, :], 'b-', label="Prediction")
 
         ax.set_title(f"Sample {idx}")
         ax.grid(True)
