@@ -102,7 +102,7 @@ def plot_pred(x_test, y_test, y_pred, save_path, x_test_plot, q_hat, confidence=
         ax.grid(True)
 
     axs[0].legend()
-    fig.suptitle("Prediction with 2σ Confidence Interval on 5 Samples")
+    fig.suptitle("Prediction with conformal intervals")
     plt.tight_layout(rect=[0, 0, 1, 0.95])
     plt.savefig(save_path)
     plt.close()
