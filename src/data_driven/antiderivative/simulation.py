@@ -209,9 +209,8 @@ def main():
         # Calculate calibration scores
         outputs = [run_model(m, x_cal, simulator, config) for m in selected_models]
         scores = np.abs(y_cal - np.mean(outputs, axis=0)) / np.std(outputs, axis=0)
-        n = len(scores)
-        q = np.ceil((n + 1) * (1 - config.coverage)) / n
-        q_hat = np.quantile(scores, q)
+
+        q_hat = np.quantile(scores, config.coverage)
 
         outputs = [run_model(m, x_test, simulator, config) for m in selected_models]
         plot_pred(x_test, y_test, np.array(outputs), ensemble_dir, x_test_plot, q_hat, confidence=True)

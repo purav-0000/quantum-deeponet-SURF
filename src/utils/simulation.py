@@ -94,6 +94,7 @@ def plot_pred(x_test, y_test, y_pred, save_path, x_test_plot, q_hat, confidence=
             lower = mean_pred - q_hat * std_pred
             upper = mean_pred + q_hat * std_pred
             ax.fill_between(x_trunk, lower, upper, color='blue', alpha=0.3, label="Conformal Interval")
+
         else:   # Single model
             ax.plot(x_trunk, y_pred[idx, :], 'b-', label="Prediction")
 
