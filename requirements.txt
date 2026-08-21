@@ -1,0 +1,16 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+deepxde==1.14.0
+joblib==1.5.1
+matplotlib==3.10.3
+numpy==2.2.6
+PyYAML==6.0.2
+qiskit==1.4.3
+qiskit-aer-gpu==0.15.1
+qiskit-ibm-provider==0.11.0
+qiskit-ibm-runtime==0.40.0
+scikit-learn==1.6.1
+scikit-optimize==0.10.2
+scipy==1.15.3
+torch==2.7.0+cpu
+tqdm==4.67.1

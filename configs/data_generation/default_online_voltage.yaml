@@ -1,0 +1,21 @@
+# Raw Data Parameters
+# Changing these parameters is unadvisable
+num_nodes: 7
+num_data_per_client: 407
+
+# Sliding Window Parameters
+memory_window_size: 5
+prediction_horizon: 1   # Fixed at 1 for predicting the next time step (t+1)
+time_domain_limits: [1.0, 3.0]
+
+# Splitting Ratios
+train: 0.8
+calibration: 0.1
+# Test split is implicitly calculated as 1.0 - train_split - cal_split
+
+# Reproducibility and Debugging
+verbose: true
+
+# Filters dataset based on the variance of the *entire* signal before windowing
+frequency_filter_percentile: 1.0
+filter_mode: "keep_lowest"

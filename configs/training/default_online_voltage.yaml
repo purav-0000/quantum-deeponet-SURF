@@ -1,0 +1,28 @@
+# Data options
+data_dir: online_voltage
+fourier_features: false
+online: true
+bootstrap: false
+
+# Model/ensemble options
+model_name: null
+ensemble_size: 0
+ensemble_name: null
+model_type: OrthoONet
+
+# Training hyperparameters
+iterations: 15000
+lr: 0.01
+batch_size: 256
+loss: MSE
+
+# Layer sizes
+layers: [5, 5]
+
+# Scheduler options
+decay_gamma: null # Prev 0.998
+minimum_lr: null  # Prev 0.003
+
+# Reproducibility and Debugging
+verbose: true
+display_every: 1000

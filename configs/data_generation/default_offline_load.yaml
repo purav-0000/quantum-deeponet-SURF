@@ -1,0 +1,18 @@
+# Data Source Keys
+input_variable_key: 'V'
+output_variable_key: 'P'
+
+# Preprocessing Hyperparameters
+time_domain_limits: [0.0, 10.0]
+filter_strength_divisor: 100.0
+filter_input_signal: false  # Allows enabling/disabling filtering on the input
+input_resolution: 20
+output_resolution: 100
+
+# Splitting Ratios
+train_split: 0.8
+cal_split: 0.1
+# Test split is implicitly calculated as 1.0 - train_split - cal_split
+
+# Reproducibility & Debugging
+verbose: false

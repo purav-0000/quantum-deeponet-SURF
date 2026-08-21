@@ -1,0 +1,28 @@
+# Data options
+data_dir: antiderivative
+fourier_features: false
+online: false
+bootstrap: false
+
+# Model/ensemble options
+model_name: null
+ensemble_size: 0
+ensemble_name: null
+model_type: OrthoONet
+
+# Training hyperparameters
+iterations: 30000
+lr: 0.001
+batch_size: null
+loss: MSE
+
+# Layer sizes
+layers: [10, 10]
+
+# Scheduler options
+decay_gamma: null
+minimum_lr: null
+
+# Reproducibility and Debugging
+verbose: false
+display_every: 1000

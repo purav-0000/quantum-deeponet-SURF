@@ -1,0 +1,22 @@
+# DeepONet sensor parameters
+n_sensors_branch: 20
+n_sensors_trunk: 50
+
+# Data split sizes
+train: 1000
+test: 200
+calibration: 200
+
+# Numerical solver parameters
+nx: 200
+nt: 20000
+xmax: 1.0
+tmax: 1.0
+
+# GRF parameters
+grf_periodicity: 1.0
+length_scale: 1.5
+interp: cubic
+
+# Miscellaneous
+n_jobs: 4
